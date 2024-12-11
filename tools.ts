@@ -39,3 +39,27 @@ export function preParse<T,N extends string[]>(input:string, mapping:(x:string)=
 
   return splitRecursively(input, separators);
 }
+
+const filterSym = Symbol("Filter")
+export function * filterMap<V, U, T extends Iterable<U>>(arr:T, predicate:(filter:typeof filterSym, el:U, index:number, arr:T)=>(V|typeof filterSym) ):Generator<V, void, unknown>{
+  let i=0
+  for(const el of arr){
+    const res = predicate(filterSym,el,i++,arr)
+    if(res !== filterSym){
+      yield res
+    }
+  }
+}
+
+type Func<T extends any[], R> = (...args: T) => R;
+const cach: Record<string, any> = {};
+export function cache<T extends any[], R>(func: Func<T, R>, ...args: T): R {
+    const key = JSON.stringify(args);
+    if (key in cach) {
+        return cach[key];
+    } else {
+        const value = func(...args);
+        cach[key] = value;
+        return value;
+    }
+}
