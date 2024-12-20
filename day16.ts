@@ -18,71 +18,110 @@ const example = `
 #.#.#.#########.#
 #S#.............#
 #################`
-function parseInput(data:string):{map:boolean[][], start:{x:number, y:number}, end:{x:number, y:number}}{
-    let sx, sy, ey, ex
-    const map = preParse(data, ((x, coords) => {
-        if(x === 'S'){
-            [sy, sx] = coords
-            return true
-        }
-        if(x === 'E'){
-            [ey, ex] = coords
-            return true
-        }
-        return x === '.'
-    }), '\n', '')
-    if(typeof sx  !== "number" || typeof sy  !== "number" || typeof ey !== "number" || typeof ex !== "number"){
-        throw Error(`Unknown starting or end positions! ${JSON.stringify({start:{x:sx, y:sy}, end:{x:ex, y:ey}})}`)
+
+type Pos = {x:number, y:number}
+type PosStr = `${number},${number}`
+
+function p2s({x,y}:Pos):PosStr{
+  return `${x},${y}`
+}
+function parse(input:string){
+  let start:Pos|undefined 
+  let end:Pos|undefined 
+  const map = preParse(input, (el, [y, x]) => {
+    if(el === 'S'){
+      start = {x,y}
+    } else if(el === 'E'){
+      end = {x,y}
     }
-    return {map, start:{x:sx, y:sy}, end:{x:ex, y:ey}}
+    return el !== '#'
+  }, '\n', '')
+  if(start === undefined || end === undefined){
+    throw Error("No start or end found")
+  }
+  return {map, start, end}
 }
 
-function Astar<T>(getCost:(option:T, curr:T) => number, start:T, toString:(x:T)=>string, stop:(x:T)=>boolean, options:(x:T) => T[]):[T, Map<string, {cost: number, camefrom: string}>]{
-    const list = new BinaryPriorityHeap<{prio:number, value:T}>((e1, e2)=>e1.prio-e2.prio)
-    list.add({prio:0, value:start})
-    const costMap = new Map<string, {cost:number, camefrom:string}>()
-    costMap.set(toString(start), { cost: 0, camefrom: '' });
+type Dir = 'N'|'E'|'S'|'W'
+type Loc = Pos & {dir:Dir}
+type LocStr = `${number},${number},${Dir}`
 
-    while(list.length){
-        const curr = list.pop()!
-        if(stop(curr.value)){
-            return [curr.value, costMap]
-        }
-        const currCost = costMap.get(toString(curr.value))?.cost
-        if(currCost === undefined){
-            throw Error("")
-        }
-        for (const option of options(curr.value)) {
-            const optionCost = currCost + getCost(option, curr.value);
-            const existingCost = costMap.get(toString(option))?.cost ?? Infinity
-            if (optionCost < existingCost) {
-                costMap.set(toString(option), { cost: optionCost, camefrom: toString(curr.value) });
-                list.add({prio:optionCost, value:option})
-            }
-        }
-    }
-    throw Error("End not found")
+function l2s({x,y,dir}:Loc):LocStr{
+  return `${x},${y},${dir}`
 }
 
-function part1(data:string){
-    const {map, start, end} = parseInput(data)
-    const strMap:string[][] = map.map(row => row.map(c => c?'.':'#'))
-    const [pos, costMap] = Astar<{x:number, y:number, dir:number}>(
-        (option, curr)=> option.dir === curr.dir ? 1 : 1001,
-        {...start, dir:0},
-        ({x,y})=>`${x},${y}`,
-        ({x,y})=>x === end.x && y === end.y,
-        ({x, y})=>[{x:x+1, y, dir:0}, {x:x-1, y, dir:2}, {x, y:y+1, dir:1}, {x, y:y-1, dir:3}].filter(({x,y}) => map[y][x])
-    )
-    let camefrom:string = `${pos.x},${pos.y}`
-    const finalCost = costMap.get(camefrom)?.cost
-    while(costMap.has(camefrom)){
-        const [x,y] = camefrom.split(',').map(Number)
-        strMap[y][x] = '*'
-        camefrom = costMap.get(camefrom)!.camefrom
+function solve(map:boolean[][], start:Pos){
+  function inBounds({x,y}:Pos){
+    return x >= 0 && y >= 0 && y < map.length && x < map[y].length
+  }
+
+  const getNeighbours = ({x, y, dir}:Loc): {el:Loc, cost:number}[] => {
+    const directions:Record<Dir, Record<'left'|'right'|'forward',Dir>> = {
+      'N': { left: 'W', right: 'E', forward: 'N' },
+      'E': { left: 'N', right: 'S', forward: 'E' },
+      'S': { left: 'E', right: 'W', forward: 'S' },
+      'W': { left: 'S', right: 'N', forward: 'W' }
+    };
+
+    const moves:Record<Dir, Pos> = {
+      'N': { x: 0, y: -1 },
+      'E': { x: 1, y: 0 },
+      'S': { x: 0, y: 1 },
+      'W': { x: -1, y: 0 }
+    };
+
+    return [
+      {el:{ x: x + moves[directions[dir].left].x, y: y + moves[directions[dir].left].y, dir: directions[dir].left }, cost:1001},
+      {el:{ x: x + moves[directions[dir].right].x, y: y + moves[directions[dir].right].y, dir: directions[dir].right }, cost:1001},
+      {el:{ x: x + moves[directions[dir].forward].x, y: y + moves[directions[dir].forward].y, dir: directions[dir].forward}, cost:1}
+    ].filter(({el:{x,y}})=>inBounds({x,y}) && map[y][x])
+  };
+
+  const queue = new BinaryPriorityHeap<{el:Loc, cost:number}>((a, b)=>a.cost-b.cost)
+  queue.add({el:{x:start.x, y:start.y, dir:'E'}, cost:0})
+  const visited = new Map<LocStr, {camefroms:Loc[], cost:number}>()
+  while(queue.length){
+    const {el:currentLoc, cost:currentCost} = queue.pop()!
+    for(const {el, cost} of getNeighbours(currentLoc)){
+      const gotSame = visited.get(l2s(el))
+      if(gotSame){
+        if(gotSame.cost === cost+currentCost){
+          gotSame.camefroms.push(currentLoc)
+        }
+      }else{
+        visited.set(l2s(el), {camefroms: [currentLoc], cost:cost+currentCost})
+        queue.add({el, cost:cost+currentCost})
+      }
     }
-    return [strMap.map(x =>x.join('')).join('\n'), finalCost]
+  }
+  return visited
 }
 
-// console.log(...part1(example))
-console.log(...part1(Deno.readTextFileSync('./day16.txt')))
+function part1(input:string){
+  const {map, start, end} = parse(input)
+  const visited = solve(map, start)
+  return visited.get(l2s({x:end.x, y:end.y, dir:'N'}))?.cost
+}
+
+function part2(input:string){
+  const {map, start, end} = parse(input)
+  const visited = solve(map, start)
+  const tiles: Set<PosStr> = new Set([p2s(end)])
+  const list:Loc[] = [{x:end.x, y:end.y, dir:'N'}]
+  while(list.length){
+    const current = visited.get(l2s(list.pop()!))
+    if(!current){
+      continue
+    }
+    for(const camefrom of current.camefroms){
+      tiles.add(p2s(camefrom))
+      list.push(camefrom)
+    }
+  }
+  return tiles.size
+}
+
+// console.log("Part 1:", part1(example))
+console.log("Part 1:", part1(Deno.readTextFileSync('./day16.txt')))
+// console.log("Part 2:", part2(example))
+console.log("Part 2:", part2(Deno.readTextFileSync('./day16.txt')))
